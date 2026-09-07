@@ -7,6 +7,7 @@ export const PIECE_STYLES = [
   { id: 'realista', label: 'Realista 3D' },
   { id: 'gatitos', label: 'Gatitos' },
   { id: 'minimalista', label: 'Minimalista' },
+  { id: 'robots', label: 'Robots' },
 ];
 
 export const DEFAULT_PIECE_STYLE = PIECE_STYLES[0].id;
