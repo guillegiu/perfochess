@@ -19,6 +19,7 @@ import {
 import { MultiplayerClient } from './multiplayer.js';
 import { PIECE_STYLES, DEFAULT_PIECE_STYLE, isValidPieceStyle } from './pieceStyles.js';
 import { BOARD_VARIANTS, pickRandomVariant, generateBlockedSquares, legalMoves } from './boardVariants.js';
+import { PIECE_INFO, pieceLabel } from './pieceInfo.js';
 
 let game = new Chess();
 let boardEngine = 'standard'; // 'standard' (chess.js) | 'custom' (CustomChess, tablero variable)
@@ -46,6 +47,7 @@ let blockedSquares = []; // permanentes, de la alteracion de tablero
 let lockedSquares = []; // [{ square, turns }] temporales, del poder "Bloquear casilla"
 let extraRowSquares = []; // casillas de la fila extra (solo variante "extra_row"), solo visual
 let frozen = []; // [{ square, color, turns }] piezas congeladas por el poder "Congelar"
+let historyPreview = null; // { index, board, from, to } o null si se esta viendo la posicion en vivo
 
 function frozenSquares() {
   return frozen.map((entry) => entry.square);
@@ -123,14 +125,32 @@ const gameOverSubtitle = document.getElementById('game-over-subtitle');
 const gameOverRematchBtn = document.getElementById('game-over-rematch');
 const playerPowersEl = document.getElementById('player-powers');
 const botPowersEl = document.getElementById('bot-powers');
+const pieceTooltipEl = document.getElementById('piece-tooltip');
+const historyBannerEl = document.getElementById('history-banner');
+const historyBannerTextEl = document.getElementById('history-banner-text');
+const historyLiveBtn = document.getElementById('history-live-btn');
 
 const board2d = new Board2D(document.getElementById('board-2d'), {
   onSquareClick: handleSquareClick,
+  onHover: handlePieceHover,
   pieceStyle,
 });
 const board3d = new Board3D(document.getElementById('board-3d'), {
   onSquareClick: handleSquareClick,
+  onHover: handlePieceHover,
 });
+
+function handlePieceHover(square, piece, pos) {
+  if (!piece) {
+    pieceTooltipEl.classList.add('hidden');
+    return;
+  }
+  const info = PIECE_INFO[piece.type];
+  pieceTooltipEl.innerHTML = `<strong>${pieceLabel(piece)}</strong>${info.moves}`;
+  pieceTooltipEl.style.left = `${pos.x + 16}px`;
+  pieceTooltipEl.style.top = `${pos.y + 16}px`;
+  pieceTooltipEl.classList.remove('hidden');
+}
 
 function renderStylePicker() {
   pieceStyleRowEl.innerHTML = PIECE_STYLES.map(
@@ -182,7 +202,34 @@ variantToggleInput.addEventListener('change', () => {
   homeVariantsListEl.classList.toggle('disabled', !variantsEnabled);
 });
 
+// Envoltorio de solo lectura para mostrar una posicion pasada del
+// historial sin tocar el estado real de la partida. Solo implementa lo
+// minimo que board2d/board3d necesitan para dibujar (get/board/isCheck/turn).
+function makeSnapshotGame(board) {
+  const files = game.files || 8;
+  const ranks = game.ranks || 8;
+  return {
+    board: () => board,
+    get: (square) => {
+      const f = square.charCodeAt(0) - 97;
+      const r = ranks - parseInt(square.slice(1), 10);
+      return board[r]?.[f] || null;
+    },
+    isCheck: () => false,
+    turn: () => 'w',
+  };
+}
+
 function renderAll() {
+  if (historyPreview) {
+    const snapshotGame = makeSnapshotGame(historyPreview.board);
+    const options = { moveArrow: { from: historyPreview.from, to: historyPreview.to } };
+    board2d.render(snapshotGame, options);
+    board3d.render(snapshotGame, {
+      lastMove: historyPreview.from !== historyPreview.to ? { from: historyPreview.from, to: historyPreview.to } : null,
+    });
+    return;
+  }
   const options = {
     selectedSquare,
     legalTargets,
@@ -237,15 +284,53 @@ function updateStatus() {
   }
 }
 
+function moveSpan(index) {
+  const entry = moveLog[index];
+  if (!entry) return '';
+  const isActive = historyPreview?.index === index;
+  return `<span class="move-half${isActive ? ' active' : ''}" data-index="${index}">${entry.text}</span>`;
+}
+
 function updateMoveList() {
   moveListEl.innerHTML = '';
   for (let i = 0; i < moveLog.length; i += 2) {
     const li = document.createElement('li');
-    const white = moveLog[i] ? moveLog[i].text : '';
-    const black = moveLog[i + 1] ? moveLog[i + 1].text : '';
-    li.textContent = black ? `${white}  ${black}` : white;
+    li.innerHTML = `${moveSpan(i)} ${moveSpan(i + 1)}`;
     moveListEl.appendChild(li);
   }
+}
+
+moveListEl.addEventListener('click', (event) => {
+  const span = event.target.closest('.move-half');
+  if (!span) return;
+  const index = parseInt(span.dataset.index, 10);
+  if (historyPreview?.index === index) {
+    returnToLive();
+  } else {
+    showHistoryAt(index);
+  }
+});
+
+historyLiveBtn.addEventListener('click', returnToLive);
+
+function showHistoryAt(index) {
+  const entry = moveLog[index];
+  if (!entry) return;
+  historyPreview = { index, board: entry.board, from: entry.from, to: entry.to };
+  historyBannerEl.classList.remove('hidden');
+  const moveNumber = Math.floor(index / 2) + 1;
+  const side = entry.color === 'w' ? 'Blancas' : 'Negras';
+  historyBannerTextEl.textContent = `Viendo jugada ${moveNumber} (${side}): ${entry.text}`;
+  renderAll();
+  updateMoveList();
+}
+
+function returnToLive() {
+  if (!historyPreview) return;
+  historyPreview = null;
+  historyBannerEl.classList.add('hidden');
+  renderAll();
+  updateMoveList();
 }
 
 function renderPowersPanel() {
@@ -495,7 +580,7 @@ function consumePower(color, type) {
 function logPowerMove(color, action) {
   const def = POWER_DEFS[action.type];
   const text = action.type === 'freeze' ? `${def.icon} ${action.to}` : `${def.icon} ${action.from}-${action.to}`;
-  moveLog.push({ color, text });
+  moveLog.push({ color, text, from: action.from, to: action.to, board: game.board() });
 }
 
 // Aplica una jugada de poder ya validada de parte de `color` (jugador local,
@@ -516,6 +601,10 @@ function commitPowerAction(color, action) {
 }
 
 function handleSquareClick(square) {
+  if (historyPreview) {
+    returnToLive();
+    return;
+  }
   if (botThinking || pendingPromotion) return;
   if (!isPlayerTurn()) return;
 
@@ -585,7 +674,7 @@ function finalizeMove(from, to, promotion) {
   const move = game.move({ from, to, promotion });
   if (!move) return;
 
-  moveLog.push({ color: move.color, text: move.san });
+  moveLog.push({ color: move.color, text: move.san, from: move.from, to: move.to, board: game.board() });
   lastMove = { from: move.from, to: move.to };
   selectedSquare = null;
   legalTargets = [];
@@ -624,7 +713,7 @@ function scheduleBotTurn() {
       commitPowerAction(botColor, action);
     } else if (action.move) {
       const move = game.move({ from: action.move.from, to: action.move.to, promotion: action.move.promotion });
-      moveLog.push({ color: move.color, text: move.san });
+      moveLog.push({ color: move.color, text: move.san, from: move.from, to: move.to, board: game.board() });
       lastMove = { from: move.from, to: move.to };
       afterTurnCompleted(move.color);
     }
@@ -714,7 +803,7 @@ function handleMultiplayerMessage(msg) {
     case 'move': {
       const move = game.move({ from: msg.from, to: msg.to, promotion: msg.promotion });
       if (!move) return;
-      moveLog.push({ color: move.color, text: move.san });
+      moveLog.push({ color: move.color, text: move.san, from: move.from, to: move.to, board: game.board() });
       lastMove = { from: move.from, to: move.to };
       afterTurnCompleted(move.color);
       refreshUI();
@@ -859,6 +948,8 @@ function resetGameState(powersData, variant = null, blocked = []) {
   lockedSquares = [];
   frozen = [];
   extraRowSquares = computeExtraRowSquares(variant, files, ranks);
+  historyPreview = null;
+  historyBannerEl.classList.add('hidden');
   promotionModal.classList.add('hidden');
   gameOverModal.classList.add('hidden');
   board2d.setBoardSize(files, ranks);

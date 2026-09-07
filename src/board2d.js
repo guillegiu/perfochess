@@ -45,12 +45,14 @@ const TARGET_DOT = 'rgba(30, 26, 20, 0.38)';
 const CAPTURE_RING = 'rgba(190, 60, 50, 0.75)';
 const LAST_MOVE = 'rgba(155, 199, 108, 0.55)';
 const CHECK_GLOW = 'rgba(214, 56, 44, 0.75)';
+const ARROW_COLOR = 'rgba(255, 209, 102, 0.9)';
 
 export class Board2D {
-  constructor(canvas, { onSquareClick, pieceStyle = 'realista' }) {
+  constructor(canvas, { onSquareClick, onHover, pieceStyle = 'realista' }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.onSquareClick = onSquareClick;
+    this.onHover = onHover;
     this.orientation = 'w';
     this.files = 8;
     this.ranks = 8;
@@ -58,6 +60,8 @@ export class Board2D {
     this.pieceStyle = pieceStyle;
 
     canvas.addEventListener('click', (event) => this.handleClick(event));
+    canvas.addEventListener('mousemove', (event) => this.handleMouseMove(event));
+    canvas.addEventListener('mouseleave', () => this.onHover?.(null, null));
     this.lastRenderArgs = null;
     this.resizeObserver = new ResizeObserver(() => {
       this.resize();
@@ -133,6 +137,23 @@ export class Board2D {
     this.onSquareClick(square);
   }
 
+  handleMouseMove(event) {
+    if (!this.onHover) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const col = Math.floor(x / this.cell);
+    const row = Math.floor(y / this.cell);
+    if (col < 0 || col >= this.files || row < 0 || row >= this.ranks) {
+      this.onHover(null, null);
+      return;
+    }
+    const square = this.viewCoordsToSquare(col, row);
+    const game = this.lastRenderArgs?.[0];
+    const piece = game ? game.get(square) : null;
+    this.onHover(piece ? square : null, piece, { x: event.clientX, y: event.clientY });
+  }
+
   findCheckedKingSquare(game) {
     if (!game.isCheck()) return null;
     const board = game.board();
@@ -150,7 +171,7 @@ export class Board2D {
 
   render(game, options = {}) {
     this.lastRenderArgs = [game, options];
-    const { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [], extraRow = [] } = options;
+    const { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [], extraRow = [], moveArrow } = options;
     const ctx = this.ctx;
     const cell = this.cell;
     const board = game.board();
@@ -357,5 +378,47 @@ export class Board2D {
         ctx.fill();
       }
     }
+
+    if (moveArrow && moveArrow.from !== moveArrow.to) {
+      this.drawArrow(moveArrow.from, moveArrow.to);
+    }
+  }
+
+  // Flecha de origen a destino, usada en la vista previa del historial.
+  drawArrow(from, to) {
+    const ctx = this.ctx;
+    const cell = this.cell;
+    const a = this.squareToViewCoords(from);
+    const b = this.squareToViewCoords(to);
+    const x1 = a.col * cell + cell / 2;
+    const y1 = a.row * cell + cell / 2;
+    const x2 = b.col * cell + cell / 2;
+    const y2 = b.row * cell + cell / 2;
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const headLen = cell * 0.28;
+    const shorten = cell * 0.32;
+    const ex = x2 - Math.cos(angle) * shorten;
+    const ey = y2 - Math.sin(angle) * shorten;
+
+    ctx.save();
+    ctx.strokeStyle = ARROW_COLOR;
+    ctx.fillStyle = ARROW_COLOR;
+    ctx.lineWidth = Math.max(2, cell * 0.09);
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = cell * 0.06;
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(ex + Math.cos(angle) * headLen, ey + Math.sin(angle) * headLen);
+    ctx.lineTo(ex + Math.cos(angle + 2.5) * headLen * 0.6, ey + Math.sin(angle + 2.5) * headLen * 0.6);
+    ctx.lineTo(ex + Math.cos(angle - 2.5) * headLen * 0.6, ey + Math.sin(angle - 2.5) * headLen * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 }

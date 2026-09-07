@@ -122,9 +122,11 @@ function buildPieceMesh(type, color) {
 }
 
 export class Board3D {
-  constructor(canvas, { onSquareClick }) {
+  constructor(canvas, { onSquareClick, onHover }) {
     this.canvas = canvas;
     this.onSquareClick = onSquareClick;
+    this.onHover = onHover;
+    this.lastGame = null;
     this.orientation = 'w';
     this.files = 8;
     this.ranks = 8;
@@ -158,6 +160,8 @@ export class Board3D {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     canvas.addEventListener('click', (event) => this.handleClick(event));
+    canvas.addEventListener('mousemove', (event) => this.handleMouseMove(event));
+    canvas.addEventListener('mouseleave', () => this.onHover?.(null, null));
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement);
@@ -329,6 +333,29 @@ export class Board3D {
     if (square) this.onSquareClick(square);
   }
 
+  handleMouseMove(event) {
+    if (!this.onHover) return;
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const meshes = [...this.pieceMeshes.values()];
+    const intersects = this.raycaster.intersectObjects(meshes, true);
+    if (intersects.length === 0) {
+      this.onHover(null, null);
+      return;
+    }
+    let obj = intersects[0].object;
+    while (obj && !obj.userData.square) obj = obj.parent;
+    if (!obj) {
+      this.onHover(null, null);
+      return;
+    }
+    const square = obj.userData.square;
+    const piece = this.lastGame ? this.lastGame.get(square) : null;
+    this.onHover(piece ? square : null, piece, { x: event.clientX, y: event.clientY });
+  }
+
   clearPieces() {
     for (const mesh of this.pieceMeshes.values()) {
       this.scene.remove(mesh);
@@ -393,6 +420,7 @@ export class Board3D {
   }
 
   render(game, { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [], extraRow = [] } = {}) {
+    this.lastGame = game;
     this.clearPieces();
     this.clearMarkers();
     this.clearBlockers();
@@ -406,6 +434,7 @@ export class Board3D {
         if (!piece) continue;
         const square = ALL_FILES[f] + (this.ranks - r);
         const mesh = buildPieceMesh(piece.type, piece.color);
+        mesh.userData.square = square;
         const { x, z } = this.squareToWorld(square, this.orientation);
         mesh.position.set(x, 0, z);
         this.scene.add(mesh);
