@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>perfochess</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="home-screen">
+        <div class="home-shell">
+          <div class="home-hero">
+            <div class="home-hero-glyph" aria-hidden="true">♞</div>
+            <h1>perfochess</h1>
+            <p class="home-tagline">Ajedrez con poderes especiales y tableros que cambian las reglas del juego.</p>
+          </div>
+
+          <div class="home-body">
+            <section class="home-primary">
+              <div class="home-mode-tabs">
+                <button type="button" class="mode-tab active" id="mode-tab-bot" data-mode="bot">Vs Bot</button>
+                <button type="button" class="mode-tab" id="mode-tab-online" data-mode="online">Online (LAN)</button>
+              </div>
+
+              <div id="home-bot-panel" class="home-mode-panel">
+                <div class="home-options">
+                  <label>
+                    Color
+                    <select id="home-side-select">
+                      <option value="w">Blancas</option>
+                      <option value="b">Negras</option>
+                    </select>
+                  </label>
+                  <label>
+                    Dificultad
+                    <select id="home-difficulty-select">
+                      <option value="1">Facil</option>
+                      <option value="2" selected>Medio</option>
+                      <option value="3">Dificil</option>
+                    </select>
+                  </label>
+                </div>
+                <button id="home-play-btn" class="home-play-btn">Jugar</button>
+              </div>
+
+              <div id="home-online-panel" class="home-mode-panel hidden">
+                <div id="online-idle" class="online-section">
+                  <p class="online-hint">Funciona entre dispositivos de la misma red WiFi/LAN.</p>
+                  <div class="online-columns">
+                    <div class="online-col">
+                      <h4>Crear sala</h4>
+                      <label>
+                        Color
+                        <select id="online-host-color">
+                          <option value="w">Blancas</option>
+                          <option value="b">Negras</option>
+                        </select>
+                      </label>
+                      <button id="online-create-btn">Crear sala</button>
+                    </div>
+                    <div class="online-col">
+                      <h4>Unirse a sala</h4>
+                      <input id="online-code-input" maxlength="4" placeholder="CODIGO" autocomplete="off" />
+                      <button id="online-join-btn">Unirse</button>
+                    </div>
+                  </div>
+                  <p id="online-error" class="online-error hidden"></p>
+                </div>
+
+                <div id="online-waiting" class="online-section hidden">
+                  <p id="online-waiting-text">Conectando...</p>
+                  <div id="online-code-display" class="online-code hidden"></div>
+                  <button id="online-cancel-btn">Cancelar</button>
+                </div>
+              </div>
+
+              <div class="home-style-picker">
+                <h3>Estilo de fichas</h3>
+                <div id="piece-style-row" class="style-row"></div>
+              </div>
+            </section>
+
+            <section class="home-secondary">
+              <div class="home-info-card">
+                <h3>Poderes</h3>
+                <p class="home-info-note">3 al azar por jugador (pueden repetirse), publicos, se consumen al usarlos.</p>
+                <div id="home-powers-list" class="mini-card-row"></div>
+              </div>
+
+              <div class="home-info-card">
+                <div class="home-variants-header">
+                  <h3>Alteraciones de tablero</h3>
+                  <label class="variant-toggle">
+                    <input type="checkbox" id="variant-toggle-input" checked />
+                    Activas
+                  </label>
+                </div>
+                <p class="home-info-note">Sortea una por partida. "Tablero 9x9" y "Fila extra" corren en motor propio, sin poderes.</p>
+                <div id="home-variants-list" class="mini-card-row"></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <header id="topbar">
+        <h1>perfochess</h1>
+        <div id="controls">
+          <button id="new-game-btn">Menu</button>
+          <button id="view-toggle-btn">Ver en 3D</button>
+        </div>
+      </header>
+
+      <main id="board-area">
+        <div id="powers-panel">
+          <h3>Tus poderes</h3>
+          <div id="player-powers" class="power-row"></div>
+          <h3>Poderes del rival</h3>
+          <div id="bot-powers" class="power-row"></div>
+        </div>
+
+        <div id="board-wrap">
+          <div id="view-2d" class="view active">
+            <canvas id="board-2d"></canvas>
+          </div>
+          <div id="view-3d" class="view">
+            <canvas id="board-3d"></canvas>
+          </div>
+          <div id="promotion-modal" class="hidden">
+            <div class="promotion-box">
+              <p>Elegi la pieza para coronar:</p>
+              <div class="promotion-options">
+                <button data-piece="q">Dama</button>
+                <button data-piece="r">Torre</button>
+                <button data-piece="b">Alfil</button>
+                <button data-piece="n">Caballo</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="game-over-modal" class="hidden">
+            <div class="game-over-box">
+              <div id="game-over-icon" class="game-over-icon">♚</div>
+              <h2 id="game-over-title">Jaque mate</h2>
+              <p id="game-over-subtitle">Ganan las Blancas</p>
+              <div class="game-over-actions">
+                <button id="game-over-rematch">Jugar de nuevo</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <aside id="side-panel">
+        <div id="status"></div>
+        <div id="variant-note" class="variant-note hidden"></div>
+        <h3>Historial</h3>
+        <ol id="move-list"></ol>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

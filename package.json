@@ -1,0 +1,21 @@
+{
+  "name": "perfochess",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.4",
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "three": "^0.185.1",
+    "ws": "^8.21.3"
+  }
+}
