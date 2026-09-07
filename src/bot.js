@@ -1,9 +1,12 @@
-import { getPowerTargets, applyPowerAction } from './powers.js';
+import { getPowerTargets, getLockableSquares, applyPowerAction } from './powers.js';
 import { legalMoves } from './boardVariants.js';
 
 const PIECE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
+const ALL_FILES = 'abcdefghi';
 
-// Tablas de posicion (desde la perspectiva de blancas, fila 0 = octava fila del tablero)
+// Tablas de posicion (desde la perspectiva de blancas, fila 0 = octava fila del tablero).
+// Solo aplican al tablero estandar 8x8: en 9x9/fila extra no calzan con la
+// geometria del tablero, asi que ahi se evalua solo material (ver evaluateBoard).
 const PAWN_TABLE = [
   0, 0, 0, 0, 0, 0, 0, 0,
   50, 50, 50, 50, 50, 50, 50, 50,
@@ -74,7 +77,7 @@ const TABLES = { p: PAWN_TABLE, n: KNIGHT_TABLE, b: BISHOP_TABLE, r: ROOK_TABLE,
 
 function squareIndex(square) {
   const file = square.charCodeAt(0) - 'a'.charCodeAt(0);
-  const rank = parseInt(square[1], 10) - 1;
+  const rank = parseInt(square.slice(1), 10) - 1;
   return { file, rank };
 }
 
@@ -86,18 +89,31 @@ function positionValue(piece, square) {
 }
 
 export function evaluateBoard(game) {
+  const files = game.files || 8;
+  const ranks = game.ranks || 8;
+  const useTables = files === 8 && ranks === 8;
   const board = game.board();
   let score = 0;
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let r = 0; r < ranks; r++) {
+    for (let f = 0; f < files; f++) {
       const piece = board[r][f];
       if (!piece) continue;
-      const square = 'abcdefgh'[f] + (8 - r);
-      const value = PIECE_VALUES[piece.type] + positionValue(piece, square);
+      const square = ALL_FILES[f] + (ranks - r);
+      const value = PIECE_VALUES[piece.type] + (useTables ? positionValue(piece, square) : 0);
       score += piece.color === 'w' ? value : -value;
     }
   }
   return score;
+}
+
+// chess.js se snapshotea/restaura por FEN; CustomChess no tiene FEN.
+function snapshotBoard(game) {
+  return typeof game.fen === 'function' ? game.fen() : game.cloneBoard();
+}
+
+function restoreBoard(game, snapshot) {
+  if (typeof snapshot === 'string') game.load(snapshot);
+  else game.restoreBoard(snapshot);
 }
 
 function orderMoves(moves) {
@@ -119,7 +135,7 @@ function minimax(game, depth, alpha, beta, maximizing, blockedSquares, frozenSqu
   if (maximizing) {
     let maxEval = -Infinity;
     for (const move of moves) {
-      game.move(move.san);
+      game.move(move);
       const result = minimax(game, depth - 1, alpha, beta, false, blockedSquares, frozenSquares);
       game.undo();
       if (result.score > maxEval) {
@@ -133,7 +149,7 @@ function minimax(game, depth, alpha, beta, maximizing, blockedSquares, frozenSqu
   } else {
     let minEval = Infinity;
     for (const move of moves) {
-      game.move(move.san);
+      game.move(move);
       const result = minimax(game, depth - 1, alpha, beta, true, blockedSquares, frozenSquares);
       game.undo();
       if (result.score < minEval) {
@@ -170,13 +186,15 @@ export function pickBotMove(game, difficulty = 2, blockedSquares = [], frozenSqu
 const FREEZE_VALUE_FACTOR = 0.25;
 
 function evaluateFreezeCandidate(game, color, frozenSquares) {
+  const files = game.files || 8;
+  const ranks = game.ranks || 8;
   const board = game.board();
   let best = null;
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let r = 0; r < ranks; r++) {
+    for (let f = 0; f < files; f++) {
       const piece = board[r][f];
       if (!piece || piece.color === color || piece.type === 'k') continue;
-      const square = 'abcdefgh'[f] + (8 - r);
+      const square = ALL_FILES[f] + (ranks - r);
       if (frozenSquares.includes(square)) continue;
       const value = PIECE_VALUES[piece.type];
       if (!best || value > best.value) best = { square, value };
@@ -185,31 +203,73 @@ function evaluateFreezeCandidate(game, color, frozenSquares) {
   return best;
 }
 
+// Candidato para "Bloquear casilla": una casilla vacia adyacente al rey
+// rival (para restarle movilidad) si hay alguna disponible, si no cualquier
+// casilla vacia al azar. Valor fijo modesto (no es una ganancia material
+// directa, es un estorbo).
+const LOCK_SQUARE_VALUE = 60;
+
+function evaluateLockCandidate(game, color, blockedSquares) {
+  const lockable = getLockableSquares(game, blockedSquares);
+  if (lockable.length === 0) return null;
+
+  const files = game.files || 8;
+  const ranks = game.ranks || 8;
+  const board = game.board();
+  const enemyColor = color === 'w' ? 'b' : 'w';
+  let kingSquare = null;
+  for (let r = 0; r < ranks && !kingSquare; r++) {
+    for (let f = 0; f < files; f++) {
+      const p = board[r][f];
+      if (p && p.type === 'k' && p.color === enemyColor) {
+        kingSquare = ALL_FILES[f] + (ranks - r);
+        break;
+      }
+    }
+  }
+
+  if (kingSquare) {
+    const [kf, kr] = [kingSquare.charCodeAt(0) - 97, parseInt(kingSquare.slice(1), 10) - 1];
+    const nearKing = lockable.filter((sq) => {
+      const f = sq.charCodeAt(0) - 97;
+      const r = parseInt(sq.slice(1), 10) - 1;
+      return Math.abs(f - kf) <= 1 && Math.abs(r - kr) <= 1;
+    });
+    if (nearKing.length > 0) {
+      return { square: nearKing[Math.floor(Math.random() * nearKing.length)], value: LOCK_SQUARE_VALUE * 1.5 };
+    }
+  }
+
+  return { square: lockable[Math.floor(Math.random() * lockable.length)], value: LOCK_SQUARE_VALUE };
+}
+
 const POWER_ADVANTAGE_THRESHOLD = 150;
 
 function evaluateBestPowerCandidate(game, color, availablePowers, blockedSquares, frozenSquares) {
-  // "freeze" se evalua aparte (no se aplica sobre una pieza propia).
-  const uniqueTypes = [...new Set(availablePowers)].filter((type) => type !== 'freeze');
+  // "freeze" y "lock_square" se evaluan aparte (no dependen de una pieza propia).
+  const uniqueTypes = [...new Set(availablePowers)].filter((type) => type !== 'freeze' && type !== 'lock_square');
   if (uniqueTypes.length === 0) return null;
 
+  const files = game.files || 8;
+  const ranks = game.ranks || 8;
   const board = game.board();
   let best = null;
 
   for (const type of uniqueTypes) {
-    for (let r = 0; r < 8; r++) {
-      for (let f = 0; f < 8; f++) {
+    for (let r = 0; r < ranks; r++) {
+      for (let f = 0; f < files; f++) {
         const piece = board[r][f];
         if (!piece || piece.color !== color) continue;
-        const from = 'abcdefgh'[f] + (8 - r);
+        const from = ALL_FILES[f] + (ranks - r);
 
         const targets = getPowerTargets(game, type, from, blockedSquares, frozenSquares);
 
         for (const to of targets) {
-          const originalFen = game.fen();
+          const snapshot = snapshotBoard(game);
           applyPowerAction(game, { type, from, to });
           const isMate = game.isCheckmate();
           const rawScore = evaluateBoard(game);
-          game.load(originalFen);
+          restoreBoard(game, snapshot);
 
           const score = color === 'w' ? rawScore : -rawScore;
           if (isMate || !best || score > best.score) {
@@ -232,7 +292,7 @@ export function pickBotAction(game, difficulty, color, availablePowers = [], blo
 
   let normalScore = null;
   if (bestNormal) {
-    game.move(bestNormal.san);
+    game.move(bestNormal);
     const rawScore = evaluateBoard(game);
     game.undo();
     normalScore = color === 'w' ? rawScore : -rawScore;
@@ -246,6 +306,16 @@ export function pickBotAction(game, difficulty, color, availablePowers = [], blo
       const score = normalScore + freeze.value * FREEZE_VALUE_FACTOR;
       if (!bestPower || score > bestPower.score) {
         bestPower = { type: 'freeze', from: freeze.square, to: freeze.square, score };
+      }
+    }
+  }
+
+  if (availablePowers.includes('lock_square') && normalScore !== null) {
+    const lock = evaluateLockCandidate(game, color, blockedSquares);
+    if (lock) {
+      const score = normalScore + lock.value;
+      if (!bestPower || score > bestPower.score) {
+        bestPower = { type: 'lock_square', from: lock.square, to: lock.square, score };
       }
     }
   }

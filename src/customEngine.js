@@ -4,8 +4,8 @@
 // estas alteraciones. Este motor implementa las reglas basicas: movimiento
 // de las 6 piezas, jaque, jaque mate, ahogado y coronacion. Deliberadamente
 // NO incluye enroque ni "al paso" (simplificacion aceptada para una
-// variante casual), y no tiene integracion con el sistema de poderes -
-// las partidas con estas alteraciones juegan sin poderes.
+// variante casual). Expone ademas put()/remove()/toggleTurn()/cloneBoard()/
+// restoreBoard() para que powers.js pueda operar igual que con chess.js.
 
 const FILES = 'abcdefghi';
 
@@ -72,6 +72,34 @@ export class CustomChess {
     const rows = [];
     for (let r = this.ranks - 1; r >= 0; r--) rows.push(this._board[r].slice());
     return rows;
+  }
+
+  // API estilo chess.js para que el sistema de poderes (powers.js) pueda
+  // editar el tablero libremente sin distinguir de que motor se trata.
+  put({ type, color }, square) {
+    const [f, r] = parseSquare(square);
+    if (!inBounds(this.files, this.ranks, f, r)) return false;
+    this._board[r][f] = { type, color };
+    return true;
+  }
+
+  remove(square) {
+    const [f, r] = parseSquare(square);
+    const piece = this._board[r]?.[f] || null;
+    if (this._board[r]) this._board[r][f] = null;
+    return piece;
+  }
+
+  toggleTurn() {
+    this._turn = this._turn === 'w' ? 'b' : 'w';
+  }
+
+  cloneBoard() {
+    return this._board.map((row) => row.slice());
+  }
+
+  restoreBoard(board) {
+    this._board = board.map((row) => row.slice());
   }
 
   _pieceMoves(f, r) {

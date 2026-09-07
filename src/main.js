@@ -1,17 +1,27 @@
 import './style.css';
 import { Chess } from 'chess.js';
 import { CustomChess } from './customEngine.js';
-import { pickCustomBotMove } from './customBot.js';
 import { Board2D } from './board2d.js';
 import { Board3D } from './board3d.js';
 import { pickBotAction } from './bot.js';
-import { POWER_DEFS, FREEZE_TURNS, randomPowerSet, getPowerTargets, isEligiblePiece, powerTargetsEnemy, applyPowerAction } from './powers.js';
+import {
+  POWER_DEFS,
+  FREEZE_TURNS,
+  LOCK_SQUARE_TURNS,
+  randomPowerSet,
+  getPowerTargets,
+  getLockableSquares,
+  isEligiblePiece,
+  powerTargetsEnemy,
+  powerTargetsSquare,
+  applyPowerAction,
+} from './powers.js';
 import { MultiplayerClient } from './multiplayer.js';
 import { PIECE_STYLES, DEFAULT_PIECE_STYLE, isValidPieceStyle } from './pieceStyles.js';
 import { BOARD_VARIANTS, pickRandomVariant, generateBlockedSquares, legalMoves } from './boardVariants.js';
 
 let game = new Chess();
-let boardEngine = 'standard'; // 'standard' (chess.js) | 'custom' (CustomChess, sin poderes)
+let boardEngine = 'standard'; // 'standard' (chess.js) | 'custom' (CustomChess, tablero variable)
 
 const storedPieceStyle = localStorage.getItem('majedrez-piece-style');
 let pieceStyle = isValidPieceStyle(storedPieceStyle) ? storedPieceStyle : DEFAULT_PIECE_STYLE;
@@ -32,7 +42,9 @@ let activePower = null; // { type, stage: 'select-piece' | 'select-target' }
 let powerFrom = null;
 let multiplayerClient = null;
 let activeVariant = null; // BOARD_VARIANTS entry o null
-let blockedSquares = [];
+let blockedSquares = []; // permanentes, de la alteracion de tablero
+let lockedSquares = []; // [{ square, turns }] temporales, del poder "Bloquear casilla"
+let extraRowSquares = []; // casillas de la fila extra (solo variante "extra_row"), solo visual
 let frozen = []; // [{ square, color, turns }] piezas congeladas por el poder "Congelar"
 
 function frozenSquares() {
@@ -48,13 +60,26 @@ function addFreeze(square, color) {
   frozen.push({ square, color, turns: FREEZE_TURNS });
 }
 
-// Se llama cada vez que `color` completa un turno (jugada normal o poder):
-// descuenta un turno a sus piezas congeladas y limpia las que fueron
-// capturadas (la casilla ya no tiene una pieza de ese color).
+// Todas las casillas intransitables ahora mismo: las permanentes de la
+// alteracion de tablero + las bloqueadas temporalmente con el poder.
+function allBlockedSquares() {
+  return [...blockedSquares, ...lockedSquares.map((entry) => entry.square)];
+}
+
+function addLock(square) {
+  lockedSquares = lockedSquares.filter((entry) => entry.square !== square);
+  lockedSquares.push({ square, turns: LOCK_SQUARE_TURNS });
+}
+
+// Se llama cada vez que se completa un turno (jugada normal o poder, de
+// cualquier color): descuenta turnos a piezas congeladas propias del color
+// que jugo y a las casillas bloqueadas temporalmente, y limpia lo vencido
+// (o lo que ya no aplica, como una pieza congelada que fue capturada).
 function afterTurnCompleted(color) {
   frozen = frozen
     .map((entry) => (entry.color === color ? { ...entry, turns: entry.turns - 1 } : entry))
     .filter((entry) => entry.turns > 0 && game.get(entry.square)?.color === entry.color);
+  lockedSquares = lockedSquares.map((entry) => ({ ...entry, turns: entry.turns - 1 })).filter((entry) => entry.turns > 0);
 }
 
 const statusEl = document.getElementById('status');
@@ -158,7 +183,14 @@ variantToggleInput.addEventListener('change', () => {
 });
 
 function renderAll() {
-  const options = { selectedSquare, legalTargets, lastMove, blockedSquares, frozen };
+  const options = {
+    selectedSquare,
+    legalTargets,
+    lastMove,
+    blockedSquares: allBlockedSquares(),
+    frozen,
+    extraRow: extraRowSquares,
+  };
   board2d.render(game, options);
   board3d.render(game, options);
 }
@@ -172,8 +204,8 @@ function updateVariantNote() {
   let detail = '';
   if (activeVariant.id === 'blocked_squares' && blockedSquares.length === 2) {
     detail = ` (${blockedSquares[0]}, ${blockedSquares[1]})`;
-  } else if (activeVariant.engine === 'custom') {
-    detail = ' (sin poderes)';
+  } else if (activeVariant.id === 'extra_row' && extraRowSquares.length > 0) {
+    detail = ` (fila ${extraRowSquares[0].slice(1)})`;
   }
   variantNoteEl.textContent = `${activeVariant.icon} Alteracion: ${activeVariant.label}${detail}`;
 }
@@ -314,6 +346,7 @@ function powerPrompt(type, stage) {
     if (type === 'cross_move') return 'Poder: elegi una torre o un alfil propio.';
     if (type === 'long_knight') return 'Poder: elegi un caballo propio.';
     if (type === 'freeze') return `Poder: elegi una pieza rival (no el rey) para congelarla ${FREEZE_TURNS} turnos.`;
+    if (type === 'lock_square') return `Poder: elegi una casilla vacia para bloquearla ${LOCK_SQUARE_TURNS} turnos.`;
     return 'Poder: elegi una pieza propia para el avance extendido.';
   }
   if (type === 'exchange') return 'Poder: elegi el peon con el que intercambiar.';
@@ -378,13 +411,34 @@ function handlePowerSquareClick(square) {
     return;
   }
 
+  if (powerTargetsSquare(activePower.type)) {
+    // Poderes de un solo paso sobre una casilla vacia (p.ej. "Bloquear casilla").
+    if (piece) return;
+    if (allBlockedSquares().includes(square)) {
+      statusEl.textContent = 'Esa casilla ya esta bloqueada.';
+      return;
+    }
+    const type = activePower.type;
+    activePower = null;
+    powerFrom = null;
+    selectedSquare = null;
+    legalTargets = [];
+    const action = commitPowerAction(playerColor, { type, from: square, to: square });
+    refreshUI();
+    sendNetworkPower(action);
+    if (mode === 'bot' && !game.isGameOver()) {
+      scheduleBotTurn();
+    }
+    return;
+  }
+
   if (activePower.stage === 'select-piece') {
     if (!piece || piece.color !== playerColor || !isEligiblePiece(activePower.type, piece)) return;
     if (frozenAt(square)) {
       statusEl.textContent = 'Esa pieza esta congelada y no puede usarse.';
       return;
     }
-    const targets = getPowerTargets(game, activePower.type, square, blockedSquares, frozenSquares());
+    const targets = getPowerTargets(game, activePower.type, square, allBlockedSquares(), frozenSquares());
     if (targets.length === 0) {
       statusEl.textContent = 'Esa pieza no tiene movimientos disponibles con este poder.';
       return;
@@ -405,7 +459,7 @@ function handlePowerSquareClick(square) {
 
   if (!legalTargets.includes(square)) {
     if (piece && piece.color === playerColor && isEligiblePiece(activePower.type, piece) && !frozenAt(square)) {
-      const targets = getPowerTargets(game, activePower.type, square, blockedSquares, frozenSquares());
+      const targets = getPowerTargets(game, activePower.type, square, allBlockedSquares(), frozenSquares());
       if (targets.length > 0) {
         powerFrom = square;
         legalTargets = targets;
@@ -452,6 +506,9 @@ function commitPowerAction(color, action) {
   logPowerMove(color, result);
   if (result.type === 'freeze') {
     addFreeze(result.to, result.piece.color);
+  }
+  if (result.type === 'lock_square') {
+    addLock(result.to);
   }
   lastMove = { from: result.from, to: result.to };
   afterTurnCompleted(color);
@@ -500,7 +557,7 @@ function handleSquareClick(square) {
 
 function selectSquare(square) {
   selectedSquare = square;
-  const moves = legalMoves(game, { square }, blockedSquares, frozenSquares());
+  const moves = legalMoves(game, { square }, allBlockedSquares(), frozenSquares());
   legalTargets = moves.map((m) => m.to);
   refreshUI();
   if (moves.length === 0 && frozenAt(square)) {
@@ -560,27 +617,16 @@ function scheduleBotTurn() {
   botThinking = true;
   updateStatus();
   setTimeout(() => {
-    if (boardEngine === 'custom') {
-      const move = pickCustomBotMove(game, difficulty);
-      if (move) {
-        const applied = game.move(move);
-        if (applied) {
-          moveLog.push({ color: applied.color, text: applied.san });
-          lastMove = { from: applied.from, to: applied.to };
-        }
-      }
-    } else {
-      const botColor = playerColor === 'w' ? 'b' : 'w';
-      const action = pickBotAction(game, difficulty, botColor, powers[botColor], blockedSquares, frozenSquares());
+    const botColor = playerColor === 'w' ? 'b' : 'w';
+    const action = pickBotAction(game, difficulty, botColor, powers[botColor], allBlockedSquares(), frozenSquares());
 
-      if (action.kind === 'power') {
-        commitPowerAction(botColor, action);
-      } else if (action.move) {
-        const move = game.move({ from: action.move.from, to: action.move.to, promotion: action.move.promotion });
-        moveLog.push({ color: move.color, text: move.san });
-        lastMove = { from: move.from, to: move.to };
-        afterTurnCompleted(move.color);
-      }
+    if (action.kind === 'power') {
+      commitPowerAction(botColor, action);
+    } else if (action.move) {
+      const move = game.move({ from: action.move.from, to: action.move.to, promotion: action.move.promotion });
+      moveLog.push({ color: move.color, text: move.san });
+      lastMove = { from: move.from, to: move.to };
+      afterTurnCompleted(move.color);
     }
 
     botThinking = false;
@@ -654,7 +700,7 @@ function handleMultiplayerMessage(msg) {
     case 'opponent-joined': {
       const hostColor = onlineHostColorSelect.value;
       const variant = variantsEnabled ? pickRandomVariant() : null;
-      const powersData = variant?.engine === 'custom' ? { w: [], b: [] } : { w: randomPowerSet(3), b: randomPowerSet(3) };
+      const powersData = { w: randomPowerSet(3), b: randomPowerSet(3) };
       const blocked = variant?.id === 'blocked_squares' ? generateBlockedSquares() : [];
       multiplayerClient.send({ type: 'init', hostColor, powers: powersData, variantId: variant?.id ?? null, blockedSquares: blocked });
       beginOnlineGame(hostColor, powersData, variant, blocked);
@@ -788,7 +834,7 @@ function startBotGame() {
   difficulty = parseInt(homeDifficultySelect.value, 10);
   homeScreen.classList.add('hidden');
   const variant = variantsEnabled ? pickRandomVariant() : null;
-  const powersData = variant?.engine === 'custom' ? { w: [], b: [] } : { w: randomPowerSet(3), b: randomPowerSet(3) };
+  const powersData = { w: randomPowerSet(3), b: randomPowerSet(3) };
   const blocked = variant?.id === 'blocked_squares' ? generateBlockedSquares() : [];
   resetGameState(powersData, variant, blocked);
   maybeTriggerBotFirstMove();
@@ -810,7 +856,9 @@ function resetGameState(powersData, variant = null, blocked = []) {
   powers = powersData;
   activeVariant = variant;
   blockedSquares = blocked;
+  lockedSquares = [];
   frozen = [];
+  extraRowSquares = computeExtraRowSquares(variant, files, ranks);
   promotionModal.classList.add('hidden');
   gameOverModal.classList.add('hidden');
   board2d.setBoardSize(files, ranks);
@@ -818,6 +866,18 @@ function resetGameState(powersData, variant = null, blocked = []) {
   board2d.setOrientation(playerColor);
   board3d.setOrientation(playerColor);
   refreshUI();
+}
+
+// La variante "fila extra" inserta una fila vacia de mas en el medio del
+// tablero (ver customEngine.js: reset() deja las piezas siempre en la
+// primera/segunda/anteultima/ultima fila, y el resto vacio en el medio).
+// Esa fila extra es siempre la fila central exacta cuando ranks es impar.
+const ALL_FILES = 'abcdefghi';
+
+function computeExtraRowSquares(variant, files, ranks) {
+  if (variant?.id !== 'extra_row') return [];
+  const midRank = Math.floor(ranks / 2) + 1; // 1-indexado
+  return Array.from({ length: files }, (_, f) => ALL_FILES[f] + midRank);
 }
 
 renderAll();

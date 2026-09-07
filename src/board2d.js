@@ -150,7 +150,7 @@ export class Board2D {
 
   render(game, options = {}) {
     this.lastRenderArgs = [game, options];
-    const { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [] } = options;
+    const { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [], extraRow = [] } = options;
     const ctx = this.ctx;
     const cell = this.cell;
     const board = game.board();
@@ -174,6 +174,22 @@ export class Board2D {
         ctx.fillStyle = gradient;
         ctx.fillRect(x, y, cell, cell);
       }
+    }
+
+    if (extraRow.length > 0) {
+      const { row } = this.squareToViewCoords(extraRow[0]);
+      ctx.save();
+      ctx.fillStyle = 'rgba(94, 194, 106, 0.22)';
+      ctx.fillRect(0, row * cell, this.files * cell, cell);
+      ctx.strokeStyle = 'rgba(94, 194, 106, 0.75)';
+      ctx.lineWidth = Math.max(1, cell * 0.035);
+      ctx.strokeRect(0, row * cell + ctx.lineWidth / 2, this.files * cell, cell - ctx.lineWidth);
+      ctx.font = `${cell * 0.15}px system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#eafbe8';
+      ctx.fillText('\u{1F4CF} FILA EXTRA', cell * 0.08, row * cell + cell * 0.06);
+      ctx.restore();
     }
 
     for (const square of blockedSquares) {

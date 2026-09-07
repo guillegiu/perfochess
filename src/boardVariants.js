@@ -3,9 +3,9 @@
 // juega sobre el chess.js normal (8x8). "Tablero 9x9" y "Fila extra" cambian
 // el tamano del tablero, algo que chess.js no soporta (esta atado a 8x8:
 // FEN, notacion a-h/1-8, representacion interna 0x88) - esas dos usan el
-// motor propio y liviano de customEngine.js en vez de chess.js, y por eso
-// esas partidas no tienen poderes (el sistema de poderes esta escrito
-// contra la API de chess.js).
+// motor propio y liviano de customEngine.js en vez de chess.js. Los poderes
+// (powers.js) funcionan igual en los tres casos; lo que el motor propio no
+// tiene es enroque ni captura al paso (simplificacion deliberada).
 
 export const BOARD_VARIANTS = {
   blocked_squares: {
@@ -20,7 +20,7 @@ export const BOARD_VARIANTS = {
     id: 'board_9x9',
     label: 'Tablero 9x9',
     icon: '➕',
-    description: 'El tablero crece a 9x9 (una columna y una fila mas). Se juega con motor propio, sin poderes ni enroque/al paso.',
+    description: 'El tablero crece a 9x9 (una columna y una fila mas). Motor propio: sin enroque ni captura al paso, pero con los mismos poderes.',
     implemented: true,
     engine: 'custom',
     files: 9,
@@ -30,7 +30,7 @@ export const BOARD_VARIANTS = {
     id: 'extra_row',
     label: 'Fila extra',
     icon: '\u{1F4CF}', // 📏
-    description: 'Se agrega una fila mas al tablero (8x9). Se juega con motor propio, sin poderes ni enroque/al paso.',
+    description: 'Se agrega una fila mas al tablero (8x9), marcada en el tablero. Motor propio: sin enroque ni captura al paso, pero con los mismos poderes.',
     implemented: true,
     engine: 'custom',
     files: 8,

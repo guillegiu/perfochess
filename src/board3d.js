@@ -14,6 +14,7 @@ const CHECK_COLOR = 0xd6382c;
 const FRAME_COLOR = 0x4a3222;
 const BLOCKED_TILE_COLOR = 0x1c1a17;
 const FROZEN_TILE_COLOR = 0x8fd4f2;
+const EXTRA_ROW_TILE_COLOR = 0x6fcf7a;
 
 const WHITE_PIECE_COLOR = 0xfbf8f1;
 const BLACK_PIECE_COLOR = 0x201c17;
@@ -391,7 +392,7 @@ export class Board3D {
     return null;
   }
 
-  render(game, { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [] } = {}) {
+  render(game, { selectedSquare, legalTargets = [], lastMove, blockedSquares = [], frozen = [], extraRow = [] } = {}) {
     this.clearPieces();
     this.clearMarkers();
     this.clearBlockers();
@@ -419,6 +420,10 @@ export class Board3D {
       const tile = this.tiles[`${col},${row}`];
       if (tile) tile.material.color.setHex(color);
     };
+
+    for (const square of extraRow) {
+      setTileColor(square, EXTRA_ROW_TILE_COLOR);
+    }
 
     for (const square of blockedSquares) {
       setTileColor(square, BLOCKED_TILE_COLOR);
