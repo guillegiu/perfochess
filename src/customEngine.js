@@ -94,12 +94,19 @@ export class CustomChess {
     this._turn = this._turn === 'w' ? 'b' : 'w';
   }
 
+  // Incluye el turno ademas del tablero: powers.js y bot.js usan esto para
+  // simular jugadas/poderes y deshacerlos, y el turno cambia durante esa
+  // simulacion (flipTurnAndCommit / applyPowerAction) igual que el tablero.
+  // Restaurar solo las piezas sin el turno dejaba `_turn` desincronizado del
+  // tablero real tras evaluar varios candidatos, lo que volvia "ilegal"
+  // (moves() filtra por this._turn) la jugada real siguiente del bot.
   cloneBoard() {
-    return this._board.map((row) => row.slice());
+    return { board: this._board.map((row) => row.slice()), turn: this._turn };
   }
 
-  restoreBoard(board) {
-    this._board = board.map((row) => row.slice());
+  restoreBoard(snapshot) {
+    this._board = snapshot.board.map((row) => row.slice());
+    this._turn = snapshot.turn;
   }
 
   _pieceMoves(f, r) {
